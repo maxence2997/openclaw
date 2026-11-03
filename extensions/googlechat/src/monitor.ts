@@ -11,7 +11,7 @@ import { channelBlockedPatch, channelReadyPatch } from "openclaw/plugin-sdk/gate
 import { MediaFetchError } from "openclaw/plugin-sdk/media-runtime";
 import { parseDateStringTimestampMs as resolveGoogleChatTimestampMs } from "openclaw/plugin-sdk/number-runtime";
 import { mergePairLoopGuardConfig } from "openclaw/plugin-sdk/pair-loop-guard-runtime";
-import { resolveAgentRoute } from "openclaw/plugin-sdk/routing";
+import { resolveAgentRoute, resolveThreadSessionKeys } from "openclaw/plugin-sdk/routing";
 import { createRuntimeConfigReader } from "openclaw/plugin-sdk/runtime-config-snapshot";
 import { resolveWebhookPath } from "openclaw/plugin-sdk/webhook-ingress";
 import type { ResolvedGoogleChatAccount } from "./accounts.js";
@@ -129,6 +129,21 @@ async function processGoogleChatEvent(
       id: spaceId,
     },
   });
+  const effectiveReplyThreadName =
+    isGroup && account.config.replyToMode && account.config.replyToMode !== "off"
+      ? message.thread?.name
+      : undefined;
+  // With threadSessions, each space thread that gets threaded replies has its
+  // own session. It starts fresh (no parent fork) so one asker's thread never
+  // enters another's context.
+  const sessionKey = resolveThreadSessionKeys({
+    baseSessionKey: route.sessionKey,
+    // Keep the default lowercasing: session keys are stored lowercased, so a
+    // case-preserved thread id would not match its captured reply source.
+    threadId: account.config.threadSessions
+      ? effectiveReplyThreadName?.split("/").pop()
+      : undefined,
+  }).sessionKey;
 
   const access = await applyGoogleChatInboundAccessPolicy({
     account,
@@ -143,7 +158,7 @@ async function processGoogleChatEvent(
     rawBody,
     contextBinding: {
       agentId: route.agentId,
-      sessionKey: route.sessionKey,
+      sessionKey,
       ...(message.name ? { messageId: message.name } : {}),
       inboundEventKind: "user_request",
     },
@@ -250,6 +265,7 @@ async function processGoogleChatEvent(
       dmScope: route.dmScope,
       accountId: route.accountId,
       routeSessionKey: route.sessionKey,
+      dispatchSessionKey: sessionKey,
     },
     reply: {
       to: `googlechat:${spaceId}`,
@@ -284,10 +300,6 @@ async function processGoogleChatEvent(
     typingIndicator = "message";
   }
   let typingMessage: GoogleChatTypingMessage | undefined;
-  const effectiveReplyThreadName =
-    account.config.replyToMode && account.config.replyToMode !== "off"
-      ? replyThreadName
-      : undefined;
 
   if (typingIndicator === "message") {
     try {
@@ -332,7 +344,7 @@ async function processGoogleChatEvent(
         cfg: config,
         channel: "googlechat",
         accountId: route.accountId,
-        route: { agentId: route.agentId, sessionKey: route.sessionKey },
+        route: { agentId: route.agentId, sessionKey },
         ctxPayload,
         delivery: {
           durable: (payload, info) =>
