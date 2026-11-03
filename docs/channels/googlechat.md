@@ -138,11 +138,12 @@ Configure the tunnel ingress rules to route only the webhook path:
    - `audienceType: "project-number"` → audience is the Cloud project number.
    - Add-on tokens under `app-url` additionally require `appPrincipal` set to the app's numeric OAuth 2.0 client ID (21 digits, not an email). Otherwise verification fails with a logged warning.
 4. Messages route by space:
-   - Spaces get per-space sessions `agent:<agentId>:googlechat:group:<spaceId>`. With `replyToMode: "first"` or `"all"`, automatic replies stay in the inbound thread. The default and explicit `"off"` modes keep replies top-level, whether typing indicators are enabled or disabled.
+   - Spaces get per-space sessions `agent:<agentId>:googlechat:group:<spaceId>`. With `replyToMode: "first"`, `"all"` or `"batched"`, automatic replies stay in the inbound thread. The default and explicit `"off"` modes keep replies top-level, whether typing indicators are enabled or disabled.
+   - Set `threadSessions: true` to give each space thread its own session `agent:<agentId>:googlechat:group:<spaceId>:thread:<threadId>`. It applies only while `replyToMode` threads replies (not `"off"`). A thread session starts fresh; it does not copy the space session's history.
    - DMs collapse into the agent's main session by default. Set `session.dmScope` for per-peer DM sessions (see [Session](/concepts/session)).
 5. DM access is pairing by default. Unknown senders receive a pairing code. Approve with:
    - `openclaw pairing approve googlechat <code>`
-6. Group spaces require @-mention by default. Mentions are detected from Chat `USER_MENTION` annotations targeting the app. Set `botUser` (e.g., `users/1234567890`) if detection needs the app's user resource name.
+6. Group spaces require @-mention by default. Mentions are detected from Chat `USER_MENTION` annotations targeting the app. Set `botUser` (e.g., `users/1234567890`) if detection needs the app's user resource name. Workspace Add-on apps need it: their mention annotations name the app by its numeric `users/<id>`, so mentions are not detected without `botUser`.
 7. When an exec or plugin approval starts from Google Chat and a stable `users/<id>` approver is configured, OpenClaw posts a native approval card (`cardsV2`) in the originating space or thread. Card buttons carry opaque callback tokens. The manual `/approve <id> <decision>` prompt appears only when native delivery is unavailable.
 
 ### Inbound durability
@@ -174,7 +175,7 @@ Use these identifiers for delivery and allowlists:
       audience: "https://gateway.example.com/googlechat",
       appPrincipal: "123456789012345678901", // add-on verification only; numeric OAuth client ID
       webhookPath: "/googlechat",
-      botUser: "users/1234567890", // optional; helps mention detection
+      botUser: "users/1234567890", // helps mention detection; required for Workspace Add-on apps
       allowBots: false,
       dmPolicy: "pairing",
       allowFrom: ["users/1234567890"],
@@ -188,6 +189,8 @@ Use these identifiers for delivery and allowlists:
         },
       },
       typingIndicator: "message",
+      replyToMode: "all",
+      threadSessions: true, // one session per space thread; needs threaded replies
       mediaMaxMb: 20,
     },
   },
@@ -205,6 +208,7 @@ Notes:
 - Native approval cards use Google Chat `cardsV2` button clicks, not reaction events. Approvers come from `allowFrom` or `defaultTo` and must be stable numeric `users/<id>` values.
 - Message actions expose `send`. Remote HTTP(S) attachments are delivered as visible links alongside their captions. Google Chat attachment upload requires user authentication, while this plugin uses service-account authentication, so local files and native uploads are not supported.
 - `typingIndicator`: `message` (default) posts a `_<Bot> is typing..._` placeholder and edits it into the first reply. If the turn ends without a visible reply, the placeholder is removed; queued turns keep it until they finish. `none` disables it. `reaction` requires user OAuth and currently falls back to `message` with a logged error under service-account auth.
+- `threadSessions` (default `false`): with threaded replies, keys each space thread to its own session so separate questions in one space do not share context. DMs and `replyToMode: "off"` keep their usual sessions. Enabling it on a space with history starts every thread fresh.
 - OpenClaw downloads every supported inbound attachment through the Chat API into the media pipeline, preserving message order. `mediaMaxMb` caps each download (default 20). Google Drive files are not downloaded. The agent receives an unavailable-attachment notice asking for a direct file upload instead. Other unsupported attachment sources receive the same upload guidance. Missing files (HTTP 404) also retain the caption with an unavailable-attachment notice, so later messages in the space can proceed; transient download failures remain retryable. Unavailable or oversize attachments do not prevent later supported files from reaching the agent. Each distinct unavailable or size-limit notice appears once per message.
 - Bot-authored messages are ignored by default. With `allowBots: true`, accepted bot messages use shared [bot loop protection](/channels/bot-loop-protection): configure `channels.defaults.botLoopProtection`, then override with `channels.googlechat.botLoopProtection` or `channels.googlechat.groups.<space>.botLoopProtection`.
 

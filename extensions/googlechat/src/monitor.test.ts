@@ -527,3 +527,45 @@ it("drops invalid event timestamps from inbound runtime payloads", async () => {
   expect(buildContext).toHaveBeenCalledWith(noTimestamp);
   expect(readGoogleChatTestIngest(runTurn)?.timestamp).toBeUndefined();
 });
+
+it.each([
+  [true, "all", "session-1:thread:question1"],
+  [true, "off", "session-1"],
+  [undefined, "all", "session-1"],
+] as const)(
+  "dispatches space messages with threadSessions %s and replyToMode %s to %s",
+  async (threadSessions, replyToMode, expectedSessionKey) => {
+    const { buildContext, dispatch, runTurn } = createHarness();
+    await dispatch(
+      {
+        type: "MESSAGE",
+        space: { name: "spaces/THREADS", type: "ROOM" },
+        message: {
+          name: "spaces/THREADS/messages/1",
+          text: "hello",
+          sender: { name: "users/alice", type: "HUMAN" },
+          thread: { name: "spaces/THREADS/threads/QuEsTiOn1" },
+        },
+      },
+      { account: makeAccount({ typingIndicator: "none", replyToMode, threadSessions }) },
+    );
+
+    expect(accessMocks.applyGoogleChatInboundAccessPolicy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contextBinding: expect.objectContaining({ sessionKey: expectedSessionKey }),
+      }),
+    );
+    expect(buildContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        route: expect.objectContaining({
+          routeSessionKey: "session-1",
+          dispatchSessionKey: expectedSessionKey,
+        }),
+      }),
+    );
+    const runArg = runTurn.mock.calls[0]?.[0] as {
+      adapter: { resolveTurn: () => { route: { sessionKey: string } } };
+    };
+    expect(runArg.adapter.resolveTurn().route.sessionKey).toBe(expectedSessionKey);
+  },
+);
